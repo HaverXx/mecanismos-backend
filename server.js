@@ -82,18 +82,18 @@ app.patch("/mecanismos/:id", (req, res) => {
     const id = req.params.id;
     const fields = [];
     const values = [];
-    
+
     for (const [key, value] of Object.entries(req.body)) {
         if (key === "idMecanismo") continue;
         fields.push(`${key} = ?`);
         values.push(value);
     }
-    
+
     if (fields.length === 0) {
         res.status(400).json({ error: "No fields to update" });
         return;
     }
-    
+
     values.push(id);
     db.run(
         `UPDATE mecanismos SET ${fields.join(", ")} WHERE idMecanismo = ?`,
