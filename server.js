@@ -397,6 +397,32 @@ app.delete("/grupos/:id", authenticateToken, (req, res) => {
     });
 });
 
+// Transferir propiedad del grupo a otro miembro
+app.patch("/grupos/:id/owner", authenticateToken, (req, res) => {
+    const idGrupo = req.params.id;
+    const { nuevoOwnerId } = req.body;
+    if (!nuevoOwnerId) return res.status(400).json({ error: "El ID del nuevo propietario es requerido." });
+
+    db.get("SELECT idOwner FROM grupo WHERE idGrupo = ?", [idGrupo], (err, group) => {
+        if (err) return res.status(500).json({ error: "Error al buscar el grupo." });
+        if (!group) return res.status(404).json({ error: "Grupo no encontrado." });
+        if (group.idOwner !== req.user.idUsuario) {
+            return res.status(403).json({ error: "Solo el propietario actual puede transferir la propiedad." });
+        }
+
+        // Verificar que el nuevo owner es miembro del grupo
+        db.get("SELECT 1 FROM usuario_grupo WHERE idUsuario = ? AND idGrupo = ?", [nuevoOwnerId, idGrupo], (err, member) => {
+            if (err) return res.status(500).json({ error: "Error de servidor." });
+            if (!member) return res.status(400).json({ error: "El usuario debe ser miembro del grupo para ser propietario." });
+
+            db.run("UPDATE grupo SET idOwner = ? WHERE idGrupo = ?", [nuevoOwnerId, idGrupo], (err) => {
+                if (err) return res.status(500).json({ error: "Error al transferir la propiedad." });
+                res.json({ message: "Propiedad transferida correctamente." });
+            });
+        });
+    });
+});
+
 // Enviar invitación de grupo por email
 app.post("/grupos/:id/invitar", authenticateToken, (req, res) => {
     const idGrupo = req.params.id;
