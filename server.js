@@ -11,6 +11,7 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 const db = new sqlite3.Database("./database.sqlite");
+db.run("PRAGMA foreign_keys = ON;");
 
 const JWT_SECRET = "super-secret-mecanismos-key";
 
@@ -21,7 +22,7 @@ db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuario_email ON usuario(email);",
     }
 });
 
-// Asegurar tablas de grupos e invitaciones
+// Asegurar tablas de grupos, invitaciones y presupuestos
 db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS grupo (
@@ -58,6 +59,44 @@ db.serialize(() => {
             // Column already exists or other non-critical error, ignore
         }
     });
+    // Tablas de presupuestos
+    db.run(`
+        CREATE TABLE IF NOT EXISTS presupuesto (
+            idPresupuesto INTEGER PRIMARY KEY AUTOINCREMENT,
+            idVivienda INTEGER NOT NULL,
+            nombre VARCHAR NOT NULL,
+            fecha VARCHAR,
+            clienteNombre VARCHAR,
+            clienteDireccion VARCHAR,
+            descuento REAL DEFAULT 0,
+            iva REAL DEFAULT 21,
+            notas TEXT,
+            estado VARCHAR DEFAULT 'BORRADOR',
+            FOREIGN KEY (idVivienda) REFERENCES vivienda(idVivienda) ON DELETE CASCADE
+        )
+    `);
+    db.run(`
+        CREATE TABLE IF NOT EXISTS presupuesto_mecanismo (
+            idPresupuestoMecanismo INTEGER PRIMARY KEY AUTOINCREMENT,
+            idPresupuesto INTEGER NOT NULL,
+            nombre VARCHAR NOT NULL,
+            descripcion VARCHAR,
+            precioUnitario REAL NOT NULL,
+            cantidad INTEGER NOT NULL,
+            idHabitacion VARCHAR,
+            FOREIGN KEY (idPresupuesto) REFERENCES presupuesto(idPresupuesto) ON DELETE CASCADE
+        )
+    `);
+    db.run(`
+        CREATE TABLE IF NOT EXISTS presupuesto_anadido (
+            idPresupuestoAnadido INTEGER PRIMARY KEY AUTOINCREMENT,
+            idPresupuesto INTEGER NOT NULL,
+            concepto VARCHAR NOT NULL,
+            precioUnitario REAL NOT NULL,
+            cantidad INTEGER NOT NULL,
+            FOREIGN KEY (idPresupuesto) REFERENCES presupuesto(idPresupuesto) ON DELETE CASCADE
+        )
+    `);
 });
 
 
@@ -681,6 +720,317 @@ app.delete("/mecanismos/:id", authenticateToken, (req, res) => {
                 return;
             }
             res.json({ message: "Mecanismo eliminado correctamente" });
+        });
+    });
+});
+
+// --- ENDPOINTS DE PRESUPUESTOS ---
+
+// Obtener presupuestos de una vivienda
+app.get("/presupuestos", authenticateToken, (req, res) => {
+    const idVivienda = req.query.idVivienda;
+    if (!idVivienda) {
+        return res.status(400).json({ error: "El parámetro idVivienda es requerido." });
+    }
+
+    // Verificar permisos sobre la vivienda
+    db.get(`
+        SELECT idVivienda FROM vivienda 
+        WHERE idVivienda = ? 
+          AND (idDuenyo = ? OR idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+    `, [idVivienda, req.user.idUsuario, req.user.idUsuario], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: "Error al verificar permisos de la vivienda." });
+        }
+        if (!row) {
+            return res.status(403).json({ error: "No tienes permiso para acceder a los presupuestos de esta vivienda." });
+        }
+
+        db.all("SELECT * FROM presupuesto WHERE idVivienda = ?", [idVivienda], (err, rows) => {
+            if (err) {
+                return res.status(500).json({ error: "Error al consultar los presupuestos." });
+            }
+            res.json(rows);
+        });
+    });
+});
+
+// Obtener el detalle de un presupuesto (incluyendo mecanismos y añadidos)
+app.get("/presupuestos/:id", authenticateToken, (req, res) => {
+    const id = req.params.id;
+
+    // Verificar pertenencia del presupuesto a través de su vivienda
+    db.get(`
+        SELECT p.* FROM presupuesto p
+        JOIN vivienda v ON p.idVivienda = v.idVivienda
+        WHERE p.idPresupuesto = ?
+          AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+    `, [id, req.user.idUsuario, req.user.idUsuario], (err, rowPresupuesto) => {
+        if (err) {
+            return res.status(500).json({ error: "Error al verificar permisos del presupuesto." });
+        }
+        if (!rowPresupuesto) {
+            return res.status(403).json({ error: "No tienes permiso para acceder a este presupuesto." });
+        }
+
+        // Obtener mecanismos del presupuesto
+        db.all("SELECT * FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err, rowMecanismos) => {
+            if (err) {
+                return res.status(500).json({ error: "Error al obtener mecanismos del presupuesto." });
+            }
+
+            // Obtener añadidos del presupuesto
+            db.all("SELECT * FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err, rowAnadidos) => {
+                if (err) {
+                    return res.status(500).json({ error: "Error al obtener añadidos del presupuesto." });
+                }
+
+                res.json({
+                    ...rowPresupuesto,
+                    mecanismos: rowMecanismos,
+                    anadidos: rowAnadidos
+                });
+            });
+        });
+    });
+});
+
+// Crear un nuevo presupuesto
+app.post("/presupuestos", authenticateToken, (req, res) => {
+    const { idVivienda, nombre, fecha, clienteNombre, clienteDireccion, descuento, iva, notas, estado } = req.body;
+    if (!idVivienda || !nombre) {
+        return res.status(400).json({ error: "Los parámetros idVivienda y nombre son requeridos." });
+    }
+
+    // Verificar permisos sobre la vivienda
+    db.get(`
+        SELECT idVivienda FROM vivienda 
+        WHERE idVivienda = ? 
+          AND (idDuenyo = ? OR idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+    `, [idVivienda, req.user.idUsuario, req.user.idUsuario], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: "Error al verificar permisos de la vivienda." });
+        }
+        if (!row) {
+            return res.status(403).json({ error: "No tienes permiso para crear presupuestos en esta vivienda." });
+        }
+
+        // Insertar presupuesto
+        db.run(
+            `INSERT INTO presupuesto (idVivienda, nombre, fecha, clienteNombre, clienteDireccion, descuento, iva, notas, estado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [idVivienda, nombre, fecha || null, clienteNombre || null, clienteDireccion || null, descuento || 0, iva || 21, notas || "", estado || "BORRADOR"],
+            function (err) {
+                if (err) {
+                    return res.status(500).json({ error: "Error al registrar el presupuesto." });
+                }
+                const idPresupuesto = this.lastID;
+
+                // Clonar mecanismos de la vivienda al presupuesto
+                db.all("SELECT nombre, descripcion, precioUnitario, cantidad, idHabitacion FROM mecanismos WHERE idVivienda = ?", [idVivienda], (err, rowsMecanismos) => {
+                    if (err || rowsMecanismos.length === 0) {
+                        return res.status(201).json({
+                            idPresupuesto,
+                            idVivienda,
+                            nombre,
+                            fecha,
+                            clienteNombre,
+                            clienteDireccion,
+                            descuento: descuento || 0,
+                            iva: iva || 21,
+                            notas: notas || "",
+                            estado: estado || "BORRADOR",
+                            mecanismos: [],
+                            anadidos: []
+                        });
+                    }
+
+                    const placeholders = rowsMecanismos.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+                    const stmtValues = [];
+                    rowsMecanismos.forEach(m => {
+                        stmtValues.push(idPresupuesto, m.nombre, m.descripcion, m.precioUnitario, m.cantidad, m.idHabitacion);
+                    });
+
+                    db.run(
+                        `INSERT INTO presupuesto_mecanismo (idPresupuesto, nombre, descripcion, precioUnitario, cantidad, idHabitacion)
+                         VALUES ${placeholders}`,
+                        stmtValues,
+                        function (err) {
+                            if (err) {
+                                console.error("Error al clonar los mecanismos:", err);
+                            }
+                            res.status(201).json({
+                                idPresupuesto,
+                                idVivienda,
+                                nombre,
+                                fecha,
+                                clienteNombre,
+                                clienteDireccion,
+                                descuento: descuento || 0,
+                                iva: iva || 21,
+                                notas: notas || "",
+                                estado: estado || "BORRADOR",
+                                mecanismos: rowsMecanismos,
+                                anadidos: []
+                            });
+                        }
+                    );
+                });
+            }
+        );
+    });
+});
+
+// Actualizar presupuesto (cabecera, mecanismos y añadidos)
+app.patch("/presupuestos/:id", authenticateToken, (req, res) => {
+    const id = req.params.id;
+    const { nombre, fecha, clienteNombre, clienteDireccion, descuento, iva, notas, estado, mecanismos, anadidos } = req.body;
+
+    // Verificar pertenencia del presupuesto a través de su vivienda
+    db.get(`
+        SELECT p.idPresupuesto FROM presupuesto p
+        JOIN vivienda v ON p.idVivienda = v.idVivienda
+        WHERE p.idPresupuesto = ?
+          AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+    `, [id, req.user.idUsuario, req.user.idUsuario], (err, row) => {
+        if (err) {
+            console.error("Error al verificar permisos:", err);
+            return res.status(500).json({ error: "Error al verificar permisos: " + err.message });
+        }
+        if (!row) {
+            return res.status(403).json({ error: "No tienes permiso para actualizar este presupuesto." });
+        }
+
+        // 1. Actualizar campos de cabecera
+        const fields = [];
+        const values = [];
+        const allowedFields = ["nombre", "fecha", "clienteNombre", "clienteDireccion", "descuento", "iva", "notas", "estado"];
+
+        for (const [key, value] of Object.entries(req.body)) {
+            if (allowedFields.includes(key)) {
+                fields.push(`${key} = ?`);
+                values.push(value);
+            }
+        }
+
+        const updateCabecera = (callback) => {
+            if (fields.length === 0) {
+                return callback(null);
+            }
+            values.push(id);
+            db.run(`UPDATE presupuesto SET ${fields.join(", ")} WHERE idPresupuesto = ?`, values, function (err) {
+                callback(err);
+            });
+        };
+
+        db.serialize(() => {
+            updateCabecera((err) => {
+                if (err) {
+                    console.error("Error al actualizar cabecera del presupuesto:", err);
+                    return res.status(500).json({ error: "Error al actualizar cabecera del presupuesto: " + err.message });
+                }
+
+                // 2. Si vienen mecanismos, los reemplazamos de forma atómica
+                const updateMecanismos = (nextStep) => {
+                    if (!mecanismos) return nextStep();
+                    db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
+                        if (err) {
+                            console.error("Error al limpiar mecanismos previos del presupuesto:", err);
+                            return res.status(500).json({ error: "Error al limpiar mecanismos previos del presupuesto: " + err.message });
+                        }
+                        if (mecanismos.length === 0) return nextStep();
+
+                        const placeholders = mecanismos.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+                        const stmtValues = [];
+                        mecanismos.forEach(m => {
+                            stmtValues.push(id, m.nombre, m.descripcion || null, m.precioUnitario, m.cantidad, m.idHabitacion || null);
+                        });
+
+                        db.run(
+                            `INSERT INTO presupuesto_mecanismo (idPresupuesto, nombre, descripcion, precioUnitario, cantidad, idHabitacion)
+                             VALUES ${placeholders}`,
+                            stmtValues,
+                            function (err) {
+                                if (err) {
+                                    console.error("Error al insertar nuevos mecanismos en presupuesto:", err);
+                                    return res.status(500).json({ error: "Error al insertar nuevos mecanismos en presupuesto: " + err.message });
+                                }
+                                nextStep();
+                            }
+                        );
+                    });
+                };
+
+                // 3. Si vienen añadidos, los reemplazamos de forma atómica
+                const updateAnadidos = () => {
+                    if (!anadidos) {
+                        return res.json({ message: "Presupuesto actualizado correctamente" });
+                    }
+                    db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
+                        if (err) {
+                            console.error("Error al limpiar añadidos previos:", err);
+                            return res.status(500).json({ error: "Error al limpiar añadidos previos: " + err.message });
+                        }
+                        if (anadidos.length === 0) {
+                            return res.json({ message: "Presupuesto actualizado correctamente" });
+                        }
+
+                        const placeholders = anadidos.map(() => "(?, ?, ?, ?)").join(", ");
+                        const stmtValues = [];
+                        anadidos.forEach(a => {
+                            stmtValues.push(id, a.concepto, a.precioUnitario, a.cantidad);
+                        });
+
+                        db.run(
+                            `INSERT INTO presupuesto_anadido (idPresupuesto, concepto, precioUnitario, cantidad)
+                             VALUES ${placeholders}`,
+                            stmtValues,
+                            function (err) {
+                                if (err) {
+                                    console.error("Error al insertar nuevos añadidos:", err);
+                                    return res.status(500).json({ error: "Error al insertar nuevos añadidos: " + err.message });
+                                }
+                                res.json({ message: "Presupuesto actualizado correctamente" });
+                            }
+                        );
+                    });
+                };
+
+                updateMecanismos(() => {
+                    updateAnadidos();
+                });
+            });
+        });
+    });
+});
+
+// Eliminar un presupuesto
+app.delete("/presupuestos/:id", authenticateToken, (req, res) => {
+    const id = req.params.id;
+
+    // Verificar pertenencia del presupuesto a través de su vivienda
+    db.get(`
+        SELECT p.idPresupuesto FROM presupuesto p
+        JOIN vivienda v ON p.idVivienda = v.idVivienda
+        WHERE p.idPresupuesto = ?
+          AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+    `, [id, req.user.idUsuario, req.user.idUsuario], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: "Error al verificar permisos." });
+        }
+        if (!row) {
+            return res.status(403).json({ error: "No tienes permiso para eliminar este presupuesto." });
+        }
+
+        db.serialize(() => {
+            db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id]);
+            db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id]);
+            db.run("DELETE FROM presupuesto WHERE idPresupuesto = ?", [id], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: "Error al eliminar el presupuesto." });
+                }
+                res.json({ message: "Presupuesto eliminado correctamente." });
+            });
         });
     });
 });
