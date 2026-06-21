@@ -1,5 +1,6 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
+require("dotenv").config();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
@@ -10,95 +11,113 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-const db = new sqlite3.Database("./database.sqlite");
-db.run("PRAGMA foreign_keys = ON;");
-
-const JWT_SECRET = "super-secret-mecanismos-key";
-
-// Asegurar índice único en email de usuario para evitar duplicidades
-db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuario_email ON usuario(email);", (err) => {
-    if (err) {
-        console.error("Error al crear índice único de email:", err);
-    }
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
 
-// Asegurar tablas de grupos, invitaciones y presupuestos
-db.serialize(() => {
-    db.run(`
-        CREATE TABLE IF NOT EXISTS grupo (
-            idGrupo INTEGER PRIMARY KEY AUTOINCREMENT,
-            idOwner INTEGER NOT NULL,
-            nombre VARCHAR NOT NULL,
-            descripcion VARCHAR,
-            FOREIGN KEY (idOwner) REFERENCES usuario(idUsuario)
-        )
-    `);
-    db.run(`
-        CREATE TABLE IF NOT EXISTS usuario_grupo (
-            idUsuario INTEGER NOT NULL,
-            idGrupo INTEGER NOT NULL,
-            PRIMARY KEY (idUsuario, idGrupo),
-            FOREIGN KEY (idUsuario) REFERENCES usuario(idUsuario),
-            FOREIGN KEY (idGrupo) REFERENCES grupo(idGrupo)
-        )
-    `);
-    db.run(`
-        CREATE TABLE IF NOT EXISTS invitacion (
-            idInvitacion INTEGER PRIMARY KEY AUTOINCREMENT,
-            idGrupo INTEGER,
-            idRemitente INTEGER,
-            emailDestinatario VARCHAR NOT NULL,
-            estado VARCHAR NOT NULL DEFAULT 'PENDIENTE',
-            FOREIGN KEY (idGrupo) REFERENCES grupo(idGrupo),
-            FOREIGN KEY (idRemitente) REFERENCES usuario(idUsuario)
-        )
-    `);
-    // Añadir columna idGrupo a vivienda si no existe
-    db.run("ALTER TABLE vivienda ADD COLUMN idGrupo INTEGER REFERENCES grupo(idGrupo)", (err) => {
-        if (err && !err.message.includes("duplicate column")) {
-            // Column already exists or other non-critical error, ignore
+const keyMap = {
+    idusuario: "idUsuario",
+    fullname: "fullName",
+    idgrupo: "idGrupo",
+    idowner: "idOwner",
+    idremitente: "idRemitente",
+    emaildestinatario: "emailDestinatario",
+    idvivienda: "idVivienda",
+    idduenyo: "idDuenyo",
+    idmecanismo: "idMecanismo",
+    preciounitario: "precioUnitario",
+    idhabitacion: "idHabitacion",
+    idpresupuesto: "idPresupuesto",
+    clientenombre: "clienteNombre",
+    clientedireccion: "clienteDireccion",
+    idpresupuestomecanismo: "idPresupuestoMecanismo",
+    idpresupuestoanadido: "idPresupuestoAnadido",
+    ownername: "ownerName",
+    gruponombre: "grupoNombre",
+    membercount: "memberCount",
+    nombreremitente: "nombreRemitente",
+    isowner: "isOwner"
+};
+
+function mapKeys(row) {
+    if (!row) return row;
+    const newRow = {};
+    for (const key in row) {
+        if (keyMap[key.toLowerCase()]) {
+            newRow[keyMap[key.toLowerCase()]] = row[key];
+        } else {
+            newRow[key] = row[key];
         }
-    });
-    // Tablas de presupuestos
-    db.run(`
-        CREATE TABLE IF NOT EXISTS presupuesto (
-            idPresupuesto INTEGER PRIMARY KEY AUTOINCREMENT,
-            idVivienda INTEGER NOT NULL,
-            nombre VARCHAR NOT NULL,
-            fecha VARCHAR,
-            clienteNombre VARCHAR,
-            clienteDireccion VARCHAR,
-            descuento REAL DEFAULT 0,
-            iva REAL DEFAULT 21,
-            notas TEXT,
-            estado VARCHAR DEFAULT 'BORRADOR',
-            FOREIGN KEY (idVivienda) REFERENCES vivienda(idVivienda) ON DELETE CASCADE
-        )
-    `);
-    db.run(`
-        CREATE TABLE IF NOT EXISTS presupuesto_mecanismo (
-            idPresupuestoMecanismo INTEGER PRIMARY KEY AUTOINCREMENT,
-            idPresupuesto INTEGER NOT NULL,
-            nombre VARCHAR NOT NULL,
-            descripcion VARCHAR,
-            precioUnitario REAL NOT NULL,
-            cantidad INTEGER NOT NULL,
-            idHabitacion VARCHAR,
-            FOREIGN KEY (idPresupuesto) REFERENCES presupuesto(idPresupuesto) ON DELETE CASCADE
-        )
-    `);
-    db.run(`
-        CREATE TABLE IF NOT EXISTS presupuesto_anadido (
-            idPresupuestoAnadido INTEGER PRIMARY KEY AUTOINCREMENT,
-            idPresupuesto INTEGER NOT NULL,
-            concepto VARCHAR NOT NULL,
-            precioUnitario REAL NOT NULL,
-            cantidad INTEGER NOT NULL,
-            FOREIGN KEY (idPresupuesto) REFERENCES presupuesto(idPresupuesto) ON DELETE CASCADE
-        )
-    `);
-});
+    }
+    return newRow;
+}
 
+function convertQuery(query) {
+    let index = 1;
+    return query.replace(/\?/g, () => `$${index++}`);
+}
+
+const db = {
+    run: function (query, params, callback) {
+        if (typeof params === 'function') {
+            callback = params;
+            params = [];
+        }
+        const isInsert = query.trim().toUpperCase().startsWith('INSERT');
+        let pgQuery = convertQuery(query);
+        if (isInsert && !pgQuery.toUpperCase().includes("RETURNING")) {
+            pgQuery += " RETURNING *";
+        }
+        pool.query(pgQuery, params || [])
+            .then(res => {
+                const context = { changes: res.rowCount, lastID: null };
+                if (isInsert && res.rows.length > 0) {
+                    const row = mapKeys(res.rows[0]);
+                    const idCol = Object.keys(row).find(k => k.toLowerCase().startsWith('id'));
+                    if (idCol) context.lastID = row[idCol];
+                }
+                if (callback) callback.call(context, null);
+            })
+            .catch(err => {
+                console.error("DB RUN ERROR:", err, "\\nQuery:", pgQuery);
+                if (callback) callback.call({ changes: 0, lastID: null }, err);
+            });
+    },
+    get: function (query, params, callback) {
+        if (typeof params === 'function') {
+            callback = params;
+            params = [];
+        }
+        pool.query(convertQuery(query), params || [])
+            .then(res => {
+                if (callback) callback(null, mapKeys(res.rows[0]));
+            })
+            .catch(err => {
+                console.error("DB GET ERROR:", err, "\\nQuery:", convertQuery(query));
+                if (callback) callback(err, null);
+            });
+    },
+    all: function (query, params, callback) {
+        if (typeof params === 'function') {
+            callback = params;
+            params = [];
+        }
+        pool.query(convertQuery(query), params || [])
+            .then(res => {
+                if (callback) callback(null, res.rows.map(mapKeys));
+            })
+            .catch(err => {
+                console.error("DB ALL ERROR:", err, "\\nQuery:", convertQuery(query));
+                if (callback) callback(err, null);
+            });
+    },
+    serialize: function(callback) {
+        callback();
+    }
+};
+
+const JWT_SECRET = process.env.JWT_SECRET || "super-secret-mecanismos-key";
 
 // Middleware de autenticación JWT
 function authenticateToken(req, res, next) {
@@ -1035,6 +1054,36 @@ app.delete("/presupuestos/:id", authenticateToken, (req, res) => {
     });
 });
 
-app.listen(3000, () => {
-    console.log("Servidor iniciado");
+// ===== HABITACIONES =====
+app.get("/habitaciones", authenticateToken, (req, res) => {
+    const { idVivienda } = req.query;
+    if (!idVivienda) return res.status(400).json({ error: "idVivienda requerido" });
+    db.all("SELECT * FROM habitacion WHERE idVivienda = ? ORDER BY nombre", [idVivienda], (err, rows) => {
+        if (err) return res.status(500).json({ error: "Error al obtener habitaciones" });
+        res.json(rows);
+    });
+});
+
+app.post("/habitaciones", authenticateToken, (req, res) => {
+    const { nombre, idVivienda } = req.body;
+    if (!nombre || !idVivienda) return res.status(400).json({ error: "nombre e idVivienda requeridos" });
+    db.run("INSERT INTO habitacion (nombre, idVivienda) VALUES (?, ?)", [nombre, idVivienda], function(err) {
+        if (err) return res.status(500).json({ error: "Error al crear habitación" });
+        res.json({ idHabitacion: this.lastID, nombre, idVivienda });
+    });
+});
+
+app.delete("/habitaciones/:id", authenticateToken, (req, res) => {
+    const id = req.params.id;
+    db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = (SELECT nombre FROM habitacion WHERE idHabitacion = ?)", [id], () => {
+        db.run("DELETE FROM habitacion WHERE idHabitacion = ?", [id], function(err) {
+            if (err) return res.status(500).json({ error: "Error al eliminar habitación" });
+            res.json({ message: "Habitación eliminada" });
+        });
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Servidor iniciado en el puerto ${PORT}`);
 });
