@@ -172,7 +172,7 @@ const initDB = async () => {
                 cantidad INTEGER NOT NULL,
                 idVivienda INTEGER NOT NULL REFERENCES vivienda(idVivienda) ON DELETE CASCADE,
                 foto TEXT,
-                idHabitacion VARCHAR(255)
+                idHabitacion INTEGER REFERENCES habitacion(idHabitacion) ON DELETE SET NULL
             );
             
             CREATE TABLE IF NOT EXISTS presupuesto (
@@ -195,7 +195,7 @@ const initDB = async () => {
                 descripcion TEXT,
                 precioUnitario REAL NOT NULL,
                 cantidad INTEGER NOT NULL,
-                idHabitacion VARCHAR(255)
+                idHabitacion INTEGER REFERENCES habitacion(idHabitacion) ON DELETE SET NULL
             );
             
             CREATE TABLE IF NOT EXISTS presupuesto_anadido (

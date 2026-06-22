@@ -1059,7 +1059,11 @@ app.get("/habitaciones", authenticateToken, (req, res) => {
     const { idVivienda } = req.query;
     if (!idVivienda) return res.status(400).json({ error: "idVivienda requerido" });
     db.all("SELECT * FROM habitacion WHERE idVivienda = ? ORDER BY nombre", [idVivienda], (err, rows) => {
-        if (err) return res.status(500).json({ error: "Error al obtener habitaciones" });
+        if (err) {
+            console.error("Error al obtener habitaciones:", err);
+            return res.status(500).json({ error: "Error al obtener habitaciones" });
+        }
+        console.log("Habitaciones obtenidas:", rows);
         res.json(rows);
     });
 });
@@ -1068,29 +1072,63 @@ app.post("/habitaciones", authenticateToken, (req, res) => {
     const { nombre, idVivienda } = req.body;
     if (!nombre || !idVivienda) return res.status(400).json({ error: "nombre e idVivienda requeridos" });
     db.run("INSERT INTO habitacion (nombre, idVivienda) VALUES (?, ?)", [nombre, idVivienda], function(err) {
-        if (err) return res.status(500).json({ error: "Error al crear habitación" });
-        res.json({ idHabitacion: this.lastID, nombre, idVivienda });
+        if (err) {
+            console.error("Error al insertar habitación:", err);
+            return res.status(500).json({ error: "Error al crear habitación" });
+        }
+        // Obtener la habitación recién creada para asegurar que tenemos el ID correcto
+        db.get("SELECT * FROM habitacion WHERE nombre = ? AND idVivienda = ? ORDER BY idHabitacion DESC LIMIT 1", [nombre, idVivienda], (getErr, row) => {
+            if (getErr || !row) {
+                console.error("Error al obtener habitación recién creada:", getErr);
+                return res.status(500).json({ error: "Error al obtener la habitación creada" });
+            }
+            res.json(row);
+        });
     });
 });
 
 app.delete("/habitaciones/:id", authenticateToken, (req, res) => {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: "ID de habitación inválido" });
+    console.log("DELETE habitación solicitado - ID:", id, "Tipo:", typeof id, "IsNaN:", isNaN(id));
+    
+    if (isNaN(id) || id <= 0) {
+        console.warn("ID inválido:", id);
+        return res.status(400).json({ error: "ID de habitación inválido" });
+    }
 
-    db.get("SELECT nombre FROM habitacion WHERE idHabitacion = ?", [id], (err, row) => {
-        if (err) return res.status(500).json({ error: "Error al buscar la habitación" });
-        if (!row) return res.status(404).json({ error: "Habitación no encontrada" });
+    db.get("SELECT * FROM habitacion WHERE idHabitacion = ?", [id], (err, row) => {
+        if (err) {
+            console.error("Error al buscar habitación:", err);
+            return res.status(500).json({ error: "Error al buscar la habitación" });
+        }
+        if (!row) {
+            console.warn("Habitación no encontrada con ID:", id);
+            return res.status(404).json({ error: "Habitación no encontrada" });
+        }
 
+        console.log("Habitación encontrada:", row);
+        
         db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = ?", [id], (updateErr) => {
-            if (updateErr) return res.status(500).json({ error: "Error al desvincular mecanismos" });
+            if (updateErr) {
+                console.error("Error al desvincular mecanismos:", updateErr);
+                return res.status(500).json({ error: "Error al desvincular mecanismos" });
+            }
+            console.log("Mecanismos desvinculados");
 
             db.run("UPDATE presupuesto_mecanismo SET idHabitacion = NULL WHERE idHabitacion = ?", [id], (updatePresErr) => {
-                if (updatePresErr) return res.status(500).json({ error: "Error al desvincular mecanismos del presupuesto" });
+                if (updatePresErr) {
+                    console.error("Error al desvincular presupuestos:", updatePresErr);
+                    return res.status(500).json({ error: "Error al desvincular mecanismos del presupuesto" });
+                }
+                console.log("Presupuestos desvinculados");
 
                 db.run("DELETE FROM habitacion WHERE idHabitacion = ?", [id], function(err) {
-                    if (err) return res.status(500).json({ error: "Error al eliminar habitación" });
-                    if (this.changes === 0) return res.status(404).json({ error: "Habitación no encontrada" });
-                    res.json({ message: "Habitación eliminada" });
+                    if (err) {
+                        console.error("Error al eliminar habitación:", err);
+                        return res.status(500).json({ error: "Error al eliminar habitación" });
+                    }
+                    console.log("Habitación eliminada exitosamente. Cambios:", this.changes);
+                    res.json({ message: "Habitación eliminada", deletedId: id });
                 });
             });
         });
