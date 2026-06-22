@@ -611,19 +611,19 @@ app.get("/grupos/:id/miembros", authenticateToken, (req, res) => {
     const idGrupo = req.params.id;
     db.get(`
         SELECT 1 FROM grupo g
-        LEFT JOIN usuario_grupo ug ON g.idGrupo = ug.idGrupo
-        WHERE g.idGrupo = ? AND (g.idOwner = ? OR ug.idUsuario = ?)
+        LEFT JOIN usuario_grupo ug ON g.idgrupo = ug.idgrupo
+        WHERE g.idgrupo = ? AND (g.idowner = ? OR ug.idusuario = ?)
     `, [idGrupo, req.user.idUsuario, req.user.idUsuario], (err, access) => {
         if (err) return res.status(500).json({ error: "Error de servidor." });
         if (!access) return res.status(403).json({ error: "No tienes permiso para ver los miembros." });
 
         db.all(`
-            SELECT u.idUsuario, u.email, u.fullName, u.empresa,
-                   CASE WHEN g.idOwner = u.idUsuario THEN 1 ELSE 0 END as isOwner
+            SELECT u.idusuario, u.email, u.fullname, u.empresa,
+                   CASE WHEN g.idowner = u.idusuario THEN 1 ELSE 0 END as isowner
             FROM usuario_grupo ug
-            JOIN usuario u ON ug.idUsuario = u.idUsuario
-            JOIN grupo g ON ug.idGrupo = g.idGrupo
-            WHERE ug.idGrupo = ?
+            JOIN usuario u ON ug.idusuario = u.idusuario
+            JOIN grupo g ON ug.idgrupo = g.idgrupo
+            WHERE ug.idgrupo = ?
         `, [idGrupo], (err, rows) => {
             if (err) return res.status(500).json({ error: "Error al obtener miembros." });
             res.json(rows);
