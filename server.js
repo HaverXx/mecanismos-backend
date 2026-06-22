@@ -418,9 +418,15 @@ app.get("/grupos/mis-grupos", authenticateToken, (req, res) => {
         FROM grupo g
         JOIN usuario u ON g.idowner = u.idusuario
         WHERE g.idowner = ? 
-           OR g.idgrupo IN (SELECT idgrupo FROM usuario_grupo WHERE idusuario = ?)
+        UNION
+        SELECT g.*, u.fullname as ownername,
+               (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idgrupo = g.idgrupo) as membercount
+        FROM grupo g
+        JOIN usuario u ON g.idowner = u.idusuario
+        WHERE g.idgrupo IN (SELECT idgrupo FROM usuario_grupo WHERE idusuario = ?)
     `, [req.user.idUsuario, req.user.idUsuario], (err, rows) => {
         if (err) {
+            console.error("Error en GET mis-grupos:", err);
             return res.status(500).json({ error: "Error al obtener los grupos." });
         }
         res.json(rows);
@@ -619,13 +625,15 @@ app.get("/grupos/:id/miembros", authenticateToken, (req, res) => {
 
         db.all(`
             SELECT u.idusuario, u.email, u.fullname, u.empresa,
-                   CASE WHEN g.idowner = u.idusuario THEN 1 ELSE 0 END as isowner
+                   COALESCE((SELECT 1 FROM grupo WHERE idgrupo = ? AND idowner = u.idusuario LIMIT 1), 0) as isowner
             FROM usuario_grupo ug
             JOIN usuario u ON ug.idusuario = u.idusuario
-            JOIN grupo g ON ug.idgrupo = g.idgrupo
             WHERE ug.idgrupo = ?
-        `, [idGrupo], (err, rows) => {
-            if (err) return res.status(500).json({ error: "Error al obtener miembros." });
+        `, [idGrupo, idGrupo], (err, rows) => {
+            if (err) {
+                console.error("Error en GET miembros:", err);
+                return res.status(500).json({ error: "Error al obtener miembros." });
+            }
             res.json(rows);
         });
     });
