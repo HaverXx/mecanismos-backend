@@ -586,8 +586,16 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
         db.get("SELECT * FROM invitacion WHERE idinvitacion = ?", [idInvitacion], (err, inv) => {
             if (err) return res.status(500).json({ error: "Error al buscar la invitación." });
             if (!inv) return res.status(404).json({ error: "Invitación no encontrada." });
-            if (inv.emaildestinatario !== user.email) {
-                return res.status(403).json({ error: "No tienes permiso para responder a esta invitación." });
+            
+            // Normalizar emails para comparación (trim + lowercase)
+            const emailDestinatario = inv.emaildestinatario ? inv.emaildestinatario.trim().toLowerCase() : '';
+            const emailUsuario = user.email ? user.email.trim().toLowerCase() : '';
+            
+            if (emailDestinatario !== emailUsuario) {
+                return res.status(403).json({ 
+                    error: "No tienes permiso para responder a esta invitación.",
+                    debug: { emailDestinatario, emailUsuario }
+                });
             }
 
             const nuevoEstado = accion === 'aceptar' ? 'ACEPTADA' : 'RECHAZADA';
