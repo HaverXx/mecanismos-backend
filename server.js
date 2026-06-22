@@ -518,7 +518,7 @@ app.post("/grupos/:id/invitar", authenticateToken, (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "El email del destinatario es requerido." });
 
-    db.get("SELECT idOwner, nombre FROM grupo WHERE idGrupo = ?", [idGrupo], (err, group) => {
+    db.get("SELECT idowner, nombre FROM grupo WHERE idgrupo = ?", [idGrupo], (err, group) => {
         if (err) return res.status(500).json({ error: "Error al buscar el grupo." });
         if (!group) return res.status(404).json({ error: "Grupo no encontrado." });
         if (group.idOwner !== req.user.idUsuario) {
@@ -526,20 +526,20 @@ app.post("/grupos/:id/invitar", authenticateToken, (req, res) => {
         }
 
         // Buscar si el email existe
-        db.get("SELECT idUsuario FROM usuario WHERE email = ?", [email], (err, user) => {
+        db.get("SELECT idusuario FROM usuario WHERE email = ?", [email], (err, user) => {
             if (err) return res.status(500).json({ error: "Error al buscar el usuario." });
             if (!user) return res.status(404).json({ error: "El usuario con ese correo no está registrado." });
 
             // Verificar si ya es miembro
-            db.get("SELECT 1 FROM usuario_grupo WHERE idUsuario = ? AND idGrupo = ?", [user.idUsuario, idGrupo], (err, member) => {
+            db.get("SELECT 1 FROM usuario_grupo WHERE idusuario = ? AND idgrupo = ?", [user.idUsuario, idGrupo], (err, member) => {
                 if (member) return res.status(400).json({ error: "El usuario ya es miembro de este grupo." });
 
                 // Verificar si hay una invitación pendiente
-                db.get("SELECT 1 FROM invitacion WHERE idGrupo = ? AND emailDestinatario = ? AND estado = 'PENDIENTE'", [idGrupo, email], (err, inv) => {
+                db.get("SELECT 1 FROM invitacion WHERE idgrupo = ? AND emaildestinatario = ? AND estado = 'PENDIENTE'", [idGrupo, email], (err, inv) => {
                     if (inv) return res.status(400).json({ error: "Ya hay una invitación pendiente para este usuario." });
 
                     db.run(
-                        "INSERT INTO invitacion (idGrupo, idRemitente, emailDestinatario, estado) VALUES (?, ?, ?, 'PENDIENTE')",
+                        "INSERT INTO invitacion (idgrupo, idremitente, emaildestinatario, estado) VALUES (?, ?, ?, 'PENDIENTE')",
                         [idGrupo, req.user.idUsuario, email],
                         function (err) {
                             if (err) return res.status(500).json({ error: "Error al enviar la invitación." });
@@ -554,14 +554,14 @@ app.post("/grupos/:id/invitar", authenticateToken, (req, res) => {
 
 // Obtener invitaciones pendientes
 app.get("/invitaciones/recibidas", authenticateToken, (req, res) => {
-    db.get("SELECT email FROM usuario WHERE idUsuario = ?", [req.user.idUsuario], (err, user) => {
+    db.get("SELECT email FROM usuario WHERE idusuario = ?", [req.user.idUsuario], (err, user) => {
         if (err || !user) return res.status(500).json({ error: "Error al buscar datos del usuario." });
         db.all(`
-            SELECT i.*, g.nombre as nombreGrupo, u.fullName as nombreRemitente
+            SELECT i.*, g.nombre as nombregrupo, u.fullname as nombreremitente
             FROM invitacion i
-            JOIN grupo g ON i.idGrupo = g.idGrupo
-            JOIN usuario u ON i.idRemitente = u.idUsuario
-            WHERE i.emailDestinatario = ? AND i.estado = 'PENDIENTE'
+            JOIN grupo g ON i.idgrupo = g.idgrupo
+            JOIN usuario u ON i.idremitente = u.idusuario
+            WHERE i.emaildestinatario = ? AND i.estado = 'PENDIENTE'
         `, [user.email], (err, rows) => {
             if (err) return res.status(500).json({ error: "Error al obtener las invitaciones." });
             res.json(rows);
@@ -577,10 +577,10 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
         return res.status(400).json({ error: "Acción inválida. Debe ser 'aceptar' o 'rechazar'." });
     }
 
-    db.get("SELECT email FROM usuario WHERE idUsuario = ?", [req.user.idUsuario], (err, user) => {
+    db.get("SELECT email FROM usuario WHERE idusuario = ?", [req.user.idUsuario], (err, user) => {
         if (err || !user) return res.status(500).json({ error: "Error de usuario." });
 
-        db.get("SELECT * FROM invitacion WHERE idInvitacion = ?", [idInvitacion], (err, inv) => {
+        db.get("SELECT * FROM invitacion WHERE idinvitacion = ?", [idInvitacion], (err, inv) => {
             if (err) return res.status(500).json({ error: "Error al buscar la invitación." });
             if (!inv) return res.status(404).json({ error: "Invitación no encontrada." });
             if (inv.emailDestinatario !== user.email) {
@@ -588,14 +588,14 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
             }
 
             const nuevoEstado = accion === 'aceptar' ? 'ACEPTADA' : 'RECHAZADA';
-            db.run("UPDATE invitacion SET estado = ? WHERE idInvitacion = ?", [nuevoEstado, idInvitacion], (err) => {
+            db.run("UPDATE invitacion SET estado = ? WHERE idinvitacion = ?", [nuevoEstado, idInvitacion], (err) => {
                 if (err) return res.status(500).json({ error: "Error al responder la invitación." });
 
                 if (accion === 'aceptar') {
                     db.run(
                         `INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)
                          ON CONFLICT (idusuario, idgrupo) DO NOTHING`,
-                        [req.user.idUsuario, inv.idgrupo],
+                        [req.user.idUsuario, inv.idGrupo],
                         (err) => {
                             if (err) return res.status(500).json({ error: "Error al unirse al grupo." });
                             res.json({ message: "Invitación aceptada. Te has unido al grupo." });
