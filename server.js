@@ -442,14 +442,15 @@ app.post("/grupos", authenticateToken, (req, res) => {
                 return res.status(500).json({ error: "Error al crear el grupo." });
             }
             const idGrupo = this.lastID;
-            console.error("DEBUG POST grupos - lastID:", this.lastID, "lastRow:", JSON.stringify(this.lastRow));
-            // Unirse al grupo
+            // Unirse al grupo - usar INSERT ... ON CONFLICT para evitar duplicados
             db.run(
-                "INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)",
+                `INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)
+                 ON CONFLICT (idusuario, idgrupo) DO NOTHING`,
                 [req.user.idUsuario, idGrupo],
                 (err) => {
                     if (err) {
                         console.error("Error al autounirse al grupo:", err);
+                        return res.status(500).json({ error: "Error al autounirse al grupo." });
                     }
                     res.status(201).json({
                         idGrupo: idGrupo,
@@ -592,8 +593,9 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
 
                 if (accion === 'aceptar') {
                     db.run(
-                        "INSERT OR IGNORE INTO usuario_grupo (idUsuario, idGrupo) VALUES (?, ?)",
-                        [req.user.idUsuario, inv.idGrupo],
+                        `INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)
+                         ON CONFLICT (idusuario, idgrupo) DO NOTHING`,
+                        [req.user.idUsuario, inv.idgrupo],
                         (err) => {
                             if (err) return res.status(500).json({ error: "Error al unirse al grupo." });
                             res.json({ message: "Invitación aceptada. Te has unido al grupo." });
