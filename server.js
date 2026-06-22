@@ -255,7 +255,7 @@ app.post("/viviendas", authenticateToken, (req, res) => {
     
     const executeInsert = () => {
         db.run(
-            "INSERT INTO vivienda (nombre, plano, idDuenyo, idGrupo) VALUES (?, ?, ?, ?)",
+            "INSERT INTO vivienda (nombre, plano, idduenyo, idgrupo) VALUES (?, ?, ?, ?)",
             [nombre, plano || null, req.user.idUsuario, idGrupo || null],
             function (err) {
                 if (err) {
@@ -434,13 +434,14 @@ app.post("/grupos", authenticateToken, (req, res) => {
         return res.status(400).json({ error: "El nombre del grupo es requerido." });
     }
     db.run(
-        "INSERT INTO grupo (idOwner, nombre, descripcion) VALUES (?, ?, ?)",
+        "INSERT INTO grupo (idowner, nombre, descripcion) VALUES (?, ?, ?)",
         [req.user.idUsuario, nombre, descripcion || ""],
         function (err) {
             if (err) {
                 return res.status(500).json({ error: "Error al crear el grupo." });
             }
             const idGrupo = this.lastID;
+            console.error("DEBUG POST grupos - lastID:", this.lastID, "lastRow:", JSON.stringify(this.lastRow));
             // Unirse al grupo
             db.run(
                 "INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)",
@@ -450,7 +451,7 @@ app.post("/grupos", authenticateToken, (req, res) => {
                         console.error("Error al autounirse al grupo:", err);
                     }
                     res.status(201).json({
-                        idGrupo,
+                        idGrupo: idGrupo,
                         idOwner: req.user.idUsuario,
                         nombre,
                         descripcion: descripcion || "",
@@ -465,17 +466,17 @@ app.post("/grupos", authenticateToken, (req, res) => {
 // Eliminar un grupo (solo el dueño)
 app.delete("/grupos/:id", authenticateToken, (req, res) => {
     const idGrupo = req.params.id;
-    db.get("SELECT idOwner FROM grupo WHERE idGrupo = ?", [idGrupo], (err, group) => {
+    db.get("SELECT idowner FROM grupo WHERE idgrupo = ?", [idGrupo], (err, group) => {
         if (err) return res.status(500).json({ error: "Error al buscar el grupo." });
         if (!group) return res.status(404).json({ error: "Grupo no encontrado." });
-        if (group.idOwner !== req.user.idUsuario) {
+        if (group.idowner !== req.user.idUsuario) {
             return res.status(403).json({ error: "No tienes permiso para eliminar este grupo." });
         }
         db.serialize(() => {
-            db.run("DELETE FROM usuario_grupo WHERE idGrupo = ?", [idGrupo]);
-            db.run("DELETE FROM invitacion WHERE idGrupo = ?", [idGrupo]);
-            db.run("UPDATE vivienda SET idGrupo = NULL WHERE idGrupo = ?", [idGrupo]);
-            db.run("DELETE FROM grupo WHERE idGrupo = ?", [idGrupo], (err) => {
+            db.run("DELETE FROM usuario_grupo WHERE idgrupo = ?", [idGrupo]);
+            db.run("DELETE FROM invitacion WHERE idgrupo = ?", [idGrupo]);
+            db.run("UPDATE vivienda SET idgrupo = NULL WHERE idgrupo = ?", [idGrupo]);
+            db.run("DELETE FROM grupo WHERE idgrupo = ?", [idGrupo], (err) => {
                 if (err) return res.status(500).json({ error: "Error al eliminar el grupo." });
                 res.json({ message: "Grupo eliminado correctamente." });
             });
