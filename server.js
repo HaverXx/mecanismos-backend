@@ -790,45 +790,55 @@ app.get("/presupuestos", authenticateToken, (req, res) => {
 // Obtener el detalle de un presupuesto (incluyendo mecanismos y añadidos)
 app.get("/presupuestos/:id", authenticateToken, (req, res) => {
     const id = req.params.id;
+    console.log("GET /presupuestos/:id called with id:", id);
 
-    // Verificar pertenencia del presupuesto a través de su vivienda
+    // Obtener presupuesto directamente (simplificado)
     db.get(`
         SELECT p.* FROM presupuesto p
-        JOIN vivienda v ON p.idVivienda = v.idVivienda
         WHERE p.idPresupuesto = ?
-          AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
-    `, [id, req.user.idUsuario, req.user.idUsuario], (err, rowPresupuesto) => {
+    `, [id], (err, rowPresupuesto) => {
         if (err) {
-            console.error("Error verificando presupuesto:", err);
-            return res.status(500).json({ error: "Error al verificar permisos del presupuesto." });
+            console.error("Error obtener presupuesto:", err);
+            return res.status(500).json({ error: "Error al obtener el presupuesto." });
         }
         if (!rowPresupuesto) {
-            return res.status(403).json({ error: "No tienes permiso para acceder a este presupuesto." });
+            return res.status(404).json({ error: "Presupuesto no encontrado." });
         }
 
-        // Obtener mecanismos del presupuesto
-        db.all("SELECT * FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err, rowMecanismos) => {
-            if (err) {
-                console.error("Error al obtener mecanismos:", err);
-                return res.status(500).json({ error: "Error al obtener mecanismos del presupuesto." });
+        // Verificar permisos sobre la vivienda
+        db.get(`
+            SELECT idVivienda FROM vivienda 
+            WHERE idVivienda = ? 
+              AND (idDuenyo = ? OR idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+        `, [rowPresupuesto.idVivienda, req.user.idUsuario, req.user.idUsuario], (err, vivRow) => {
+            if (err || !vivRow) {
+                return res.status(403).json({ error: "No tienes permiso para acceder a este presupuesto." });
             }
 
-            // Obtener añadidos del presupuesto
-            db.all("SELECT * FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err, rowAnadidos) => {
+            // Obtener mecanismos del presupuesto
+            db.all("SELECT * FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err, rowMecanismos) => {
                 if (err) {
-                    console.error("Error al obtener añadidos:", err);
-                    return res.status(500).json({ error: "Error al obtener añadidos del presupuesto." });
+                    console.error("Error al obtener mecanismos:", err);
+                    return res.status(500).json({ error: "Error al obtener mecanismos del presupuesto." });
                 }
 
-                const response = {
-                    ...rowPresupuesto,
-                    mecanismos: rowMecanismos || [],
-                    anadidos: rowAnadidos || []
-                };
-                
-                console.log("GET presupuesto/:id - idPresupuesto:", id, "response keys:", Object.keys(response).slice(0, 10));
-                
-                res.json(response);
+                // Obtener añadidos del presupuesto
+                db.all("SELECT * FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err, rowAnadidos) => {
+                    if (err) {
+                        console.error("Error al obtener añadidos:", err);
+                        return res.status(500).json({ error: "Error al obtener añadidos del presupuesto." });
+                    }
+
+                    const response = {
+                        ...rowPresupuesto,
+                        mecanismos: rowMecanismos || [],
+                        anadidos: rowAnadidos || []
+                    };
+                    
+                    console.log("GET presupuesto/:id - idPresupuesto:", id, "tiene mecanismos:", (rowMecanismos || []).length);
+                    
+                    res.json(response);
+                });
             });
         });
     });
@@ -861,46 +871,51 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
             [idVivienda, nombre, fecha || null, clienteNombre || null, clienteDireccion || null, descuento || 0, iva || 21, notas || "", estado || "BORRADOR"],
             function (err) {
                 if (err) {
+                    console.error("Error al registrar presupuesto:", err);
                     return res.status(500).json({ error: "Error al registrar el presupuesto." });
                 }
-                const idPresupuesto = this.lastID;
                 
-                // Asegurar que presupuestoData tenga idPresupuesto correcto
-                const presupuestoData = this.lastRow ? {
-                    ...this.lastRow,
-                    idPresupuesto: this.lastRow.idPresupuesto || idPresupuesto
-                } : {
+                // Obtener el ID del presupuesto insertado
+                let idPresupuesto = null;
+                if (this.lastRow && this.lastRow.idPresupuesto) {
+                    idPresupuesto = this.lastRow.idPresupuesto;
+                } else if (this.lastID) {
+                    idPresupuesto = this.lastID;
+                }
+                
+                if (!idPresupuesto) {
+                    console.error("No se pudo obtener idPresupuesto. lastRow:", this.lastRow, "lastID:", this.lastID);
+                    return res.status(500).json({ error: "Error al obtener ID del presupuesto creado." });
+                }
+                
+                // Datos base del presupuesto
+                const presupuestoData = {
                     idPresupuesto,
                     idVivienda,
                     nombre,
-                    fecha,
-                    clienteNombre,
-                    clienteDireccion,
-                    descuento: descuento || 0,
-                    iva: iva || 21,
+                    fecha: fecha || null,
+                    clienteNombre: clienteNombre || null,
+                    clienteDireccion: clienteDireccion || null,
+                    descuento: parseFloat(descuento) || 0,
+                    iva: parseFloat(iva) || 21,
                     notas: notas || "",
-                    estado: estado || "BORRADOR"
+                    estado: estado || "BORRADOR",
+                    mecanismos: [],
+                    anadidos: []
                 };
                 
-                console.log("POST presupuesto - idPresupuesto:", idPresupuesto, "lastRow:", this.lastRow ? "present" : "null");
+                console.log("POST presupuesto - id creado:", idPresupuesto);
 
-                // Clonar mecanismos de la vivienda al presupuesto
+                // Clonar mecanismos de la vivienda al presupuesto (sin bloquear la respuesta)
                 db.all("SELECT nombre, descripcion, precioUnitario, cantidad, idHabitacion FROM mecanismos WHERE idVivienda = ?", [idVivienda], (err, rowsMecanismos) => {
                     if (err) {
-                        console.error("Error al obtener mecanismos de la vivienda:", err);
-                        return res.status(201).json({
-                            ...presupuestoData,
-                            mecanismos: [],
-                            anadidos: []
-                        });
+                        console.error("Error al obtener mecanismos:", err);
+                        // Continuar de todas formas
+                        return;
                     }
                     
                     if (!rowsMecanismos || rowsMecanismos.length === 0) {
-                        return res.status(201).json({
-                            ...presupuestoData,
-                            mecanismos: [],
-                            anadidos: []
-                        });
+                        return;
                     }
 
                     const placeholders = rowsMecanismos.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
@@ -915,16 +930,16 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                         stmtValues,
                         function (err) {
                             if (err) {
-                                console.error("Error al clonar los mecanismos:", err);
+                                console.error("Error al clonar mecanismos:", err);
+                            } else {
+                                console.log("Mecanismos clonados para presupuesto:", idPresupuesto);
                             }
-                            res.status(201).json({
-                                ...presupuestoData,
-                                mecanismos: rowsMecanismos || [],
-                                anadidos: []
-                            });
                         }
                     );
                 });
+                
+                // Devolver la respuesta INMEDIATAMENTE con los datos del presupuesto
+                res.status(201).json(presupuestoData);
             }
         );
     });
@@ -1054,40 +1069,52 @@ app.patch("/presupuestos/:id", authenticateToken, (req, res) => {
 // Eliminar un presupuesto
 app.delete("/presupuestos/:id", authenticateToken, (req, res) => {
     const id = req.params.id;
+    console.log("DELETE /presupuestos/:id called with id:", id);
 
-    // Verificar pertenencia del presupuesto a través de su vivienda
+    // Verificar pertenencia del presupuesto a través de su vivienda (simplificado)
     db.get(`
-        SELECT p.idPresupuesto FROM presupuesto p
-        JOIN vivienda v ON p.idVivienda = v.idVivienda
+        SELECT p.idPresupuesto, p.idVivienda FROM presupuesto p
         WHERE p.idPresupuesto = ?
-          AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
-    `, [id, req.user.idUsuario, req.user.idUsuario], (err, row) => {
+    `, [id], (err, row) => {
         if (err) {
+            console.error("Error checking presupuesto:", err);
             return res.status(500).json({ error: "Error al verificar permisos." });
         }
         if (!row) {
-            return res.status(403).json({ error: "No tienes permiso para eliminar este presupuesto." });
+            return res.status(404).json({ error: "Presupuesto no encontrado." });
         }
 
-        // Eliminar primero mecanismos asociados
-        db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
-            if (err) {
-                console.error("Error al eliminar mecanismos del presupuesto:", err);
-                return res.status(500).json({ error: "Error al eliminar mecanismos del presupuesto." });
+        // Verificar permisos sobre la vivienda
+        db.get(`
+            SELECT idVivienda FROM vivienda 
+            WHERE idVivienda = ? 
+              AND (idDuenyo = ? OR idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
+        `, [row.idVivienda, req.user.idUsuario, req.user.idUsuario], (err, vivRow) => {
+            if (err || !vivRow) {
+                return res.status(403).json({ error: "No tienes permiso para eliminar este presupuesto." });
             }
-            // Luego eliminar añadidos
-            db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
+
+            // Eliminar primero mecanismos asociados
+            db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
                 if (err) {
-                    console.error("Error al eliminar añadidos del presupuesto:", err);
-                    return res.status(500).json({ error: "Error al eliminar añadidos del presupuesto." });
+                    console.error("Error al eliminar mecanismos del presupuesto:", err);
+                    return res.status(500).json({ error: "Error al eliminar mecanismos del presupuesto." });
                 }
-                // Finalmente eliminar el presupuesto
-                db.run("DELETE FROM presupuesto WHERE idPresupuesto = ?", [id], function (err) {
+                // Luego eliminar añadidos
+                db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
                     if (err) {
-                        console.error("Error al eliminar el presupuesto:", err);
-                        return res.status(500).json({ error: "Error al eliminar el presupuesto." });
+                        console.error("Error al eliminar añadidos del presupuesto:", err);
+                        return res.status(500).json({ error: "Error al eliminar añadidos del presupuesto." });
                     }
-                    res.json({ message: "Presupuesto eliminado correctamente." });
+                    // Finalmente eliminar el presupuesto
+                    db.run("DELETE FROM presupuesto WHERE idPresupuesto = ?", [id], function (err) {
+                        if (err) {
+                            console.error("Error al eliminar el presupuesto:", err);
+                            return res.status(500).json({ error: "Error al eliminar el presupuesto." });
+                        }
+                        console.log("Presupuesto eliminado correctamente:", id);
+                        res.json({ message: "Presupuesto eliminado correctamente." });
+                    });
                 });
             });
         });
