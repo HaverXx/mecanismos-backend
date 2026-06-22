@@ -23,6 +23,7 @@ const keyMap = {
     idowner: "idOwner",
     idremitente: "idRemitente",
     emaildestinatario: "emailDestinatario",
+    idusuario_destinatario: "idUsuarioDestinatario",
     idvivienda: "idVivienda",
     idduenyo: "idDuenyo",
     idmecanismo: "idMecanismo",
@@ -538,12 +539,12 @@ app.post("/grupos/:id/invitar", authenticateToken, (req, res) => {
                 if (member) return res.status(400).json({ error: "El usuario ya es miembro de este grupo." });
 
                 // Verificar si hay una invitación pendiente
-                db.get("SELECT 1 FROM invitacion WHERE idgrupo = ? AND idusuario_destinatario = ? AND estado = 'PENDIENTE'", [idGrupo, user.idusuario], (err, inv) => {
+                db.get("SELECT 1 FROM invitacion WHERE idgrupo = ? AND idusuario_destinatario = ? AND estado = 'PENDIENTE'", [idGrupo, user.idUsuario], (err, inv) => {
                     if (inv) return res.status(400).json({ error: "Ya hay una invitación pendiente para este usuario." });
 
                     db.run(
                         "INSERT INTO invitacion (idgrupo, idremitente, emaildestinatario, idusuario_destinatario, estado) VALUES (?, ?, ?, ?, 'PENDIENTE')",
-                        [idGrupo, req.user.idUsuario, email, user.idusuario],
+                        [idGrupo, req.user.idUsuario, email, user.idUsuario],
                         function (err) {
                             if (err) return res.status(500).json({ error: "Error al enviar la invitación." });
                             res.status(201).json({ message: "Invitación enviada con éxito." });
@@ -592,11 +593,11 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
         }
         
         // Validar que el usuario logueado es el destinatario
-        if (inv.idusuario_destinatario !== req.user.idUsuario) {
+        if (inv.idUsuarioDestinatario !== req.user.idUsuario) {
             return res.status(403).json({ 
                 error: "No tienes permiso para responder a esta invitación.",
                 debug: { 
-                    idusuario_destinatario: inv.idusuario_destinatario,
+                    idUsuarioDestinatario: inv.idUsuarioDestinatario,
                     idUsuarioLogueado: req.user.idUsuario,
                     idInvitacion
                 }
@@ -611,7 +612,7 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
                 db.run(
                     `INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)
                      ON CONFLICT (idusuario, idgrupo) DO NOTHING`,
-                    [req.user.idUsuario, inv.idgrupo],
+                    [req.user.idUsuario, inv.idGrupo],
                     (err) => {
                         if (err) return res.status(500).json({ error: "Error al unirse al grupo." });
                         res.json({ message: "Invitación aceptada. Te has unido al grupo." });
