@@ -73,13 +73,28 @@ const db = {
             .then(res => {
                 const context = { changes: res.rowCount, lastID: null, lastRow: null };
                 if (isInsert && res.rows.length > 0) {
-                    const row = mapKeys(res.rows[0]);
+                    const rawRow = res.rows[0];
+                    const row = mapKeys(rawRow);
                     context.lastRow = row;
-                    const idCol = Object.keys(row).find(k => k.toLowerCase().includes('presupuesto') && k.toLowerCase().includes('id')) ||
-                                  Object.keys(row).find(k => k.toLowerCase().includes('vivienda') && k.toLowerCase().includes('id')) ||
-                                  Object.keys(row).find(k => k.toLowerCase().includes('usuario') && k.toLowerCase().includes('id')) ||
-                                  Object.keys(row).find(k => k.toLowerCase().startsWith('id'));
-                    if (idCol) context.lastID = row[idCol];
+                    
+                    // Buscar el ID en la fila mapeada (camelCase)
+                    let idCol = Object.keys(row).find(k => 
+                        (k.toLowerCase().includes('presupuesto') || 
+                         k.toLowerCase().includes('vivienda') || 
+                         k.toLowerCase().includes('usuario') || 
+                         k.toLowerCase().includes('grupo') || 
+                         k.toLowerCase().includes('habitacion') || 
+                         k.toLowerCase().includes('mecanismo')) && 
+                        k.toLowerCase().includes('id')
+                    );
+                    
+                    if (idCol) {
+                        context.lastID = row[idCol];
+                    } else {
+                        // Si no encontró, buscar el primer campo que empiece con 'id'
+                        idCol = Object.keys(row).find(k => k.toLowerCase().startsWith('id'));
+                        if (idCol) context.lastID = row[idCol];
+                    }
                 }
                 if (callback) callback.call(context, null);
             })
