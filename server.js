@@ -621,7 +621,6 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
                 res.json({ message: "Invitación rechazada." });
             }
         });
-    }););
     });
 });
 
