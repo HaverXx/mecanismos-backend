@@ -71,17 +71,21 @@ const db = {
         }
         pool.query(pgQuery, params || [])
             .then(res => {
-                const context = { changes: res.rowCount, lastID: null };
+                const context = { changes: res.rowCount, lastID: null, lastRow: null };
                 if (isInsert && res.rows.length > 0) {
                     const row = mapKeys(res.rows[0]);
-                    const idCol = Object.keys(row).find(k => k.toLowerCase().startsWith('id'));
+                    context.lastRow = row;
+                    const idCol = Object.keys(row).find(k => k.toLowerCase().includes('presupuesto') && k.toLowerCase().includes('id')) ||
+                                  Object.keys(row).find(k => k.toLowerCase().includes('vivienda') && k.toLowerCase().includes('id')) ||
+                                  Object.keys(row).find(k => k.toLowerCase().includes('usuario') && k.toLowerCase().includes('id')) ||
+                                  Object.keys(row).find(k => k.toLowerCase().startsWith('id'));
                     if (idCol) context.lastID = row[idCol];
                 }
                 if (callback) callback.call(context, null);
             })
             .catch(err => {
                 console.error("DB RUN ERROR:", err, "\\nQuery:", pgQuery);
-                if (callback) callback.call({ changes: 0, lastID: null }, err);
+                if (callback) callback.call({ changes: 0, lastID: null, lastRow: null }, err);
             });
     },
     get: function (query, params, callback) {
@@ -320,18 +324,16 @@ app.delete("/viviendas/:id", authenticateToken, (req, res) => {
             return res.status(404).json({ error: "Vivienda no encontrada o no autorizada." });
         }
 
-        db.serialize(() => {
-            // Eliminar mecanismos asociados
-            db.run("DELETE FROM mecanismos WHERE idVivienda = ?", [id], (err) => {
-                if (err) {
-                    console.error("Error al eliminar mecanismos asociados:", err);
-                }
-            });
-            // Eliminar la vivienda
+        // Eliminar mecanismos primero
+        db.run("DELETE FROM mecanismos WHERE idVivienda = ?", [id], (err) => {
+            if (err) {
+                console.error("Error al eliminar mecanismos asociados:", err);
+                return res.status(500).json({ error: "Error al eliminar mecanismos asociados." });
+            }
+            // Luego eliminar la vivienda
             db.run("DELETE FROM vivienda WHERE idVivienda = ? AND idDuenyo = ?", [id, req.user.idUsuario], function (err) {
                 if (err) {
-                    res.status(500).json({ error: "Error al eliminar la vivienda de la base de datos." });
-                    return;
+                    return res.status(500).json({ error: "Error al eliminar la vivienda de la base de datos." });
                 }
                 res.json({ message: "Vivienda eliminada correctamente" });
             });
@@ -371,12 +373,23 @@ app.get("/mecanismos", authenticateToken, (req, res) => {
 
 // USUARIO (Para administración si se necesitase)
 app.get("/usuarios", authenticateToken, (req, res) => {
-    db.all("SELECT idUsuario, email, fullName, empresa FROM usuario", [], (err, rows) => {
+    // Obtener solo usuarios de grupos compartidos para invitaciones o colaboración
+    // Devolver usuarios de los mismos grupos (excluye al usuario actual)
+    db.all(`
+        SELECT DISTINCT u.idUsuario, u.email, u.fullName, u.empresa 
+        FROM usuario u
+        JOIN usuario_grupo ug ON u.idUsuario = ug.idUsuario
+        WHERE ug.idGrupo IN (
+            SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?
+        )
+        AND u.idUsuario != ?
+        ORDER BY u.fullName
+    `, [req.user.idUsuario, req.user.idUsuario], (err, rows) => {
         if (err) {
             res.status(500).json({ error: "Error al obtener los usuarios." });
             return;
         }
-        res.json(rows);
+        res.json(rows || []);
     });
 });
 
@@ -795,19 +808,21 @@ app.get("/presupuestos/:id", authenticateToken, (req, res) => {
         // Obtener mecanismos del presupuesto
         db.all("SELECT * FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err, rowMecanismos) => {
             if (err) {
+                console.error("Error al obtener mecanismos:", err);
                 return res.status(500).json({ error: "Error al obtener mecanismos del presupuesto." });
             }
 
             // Obtener añadidos del presupuesto
             db.all("SELECT * FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err, rowAnadidos) => {
                 if (err) {
+                    console.error("Error al obtener añadidos:", err);
                     return res.status(500).json({ error: "Error al obtener añadidos del presupuesto." });
                 }
 
                 res.json({
                     ...rowPresupuesto,
-                    mecanismos: rowMecanismos,
-                    anadidos: rowAnadidos
+                    mecanismos: rowMecanismos || [],
+                    anadidos: rowAnadidos || []
                 });
             });
         });
@@ -844,21 +859,33 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                     return res.status(500).json({ error: "Error al registrar el presupuesto." });
                 }
                 const idPresupuesto = this.lastID;
+                const presupuestoData = this.lastRow || {
+                    idPresupuesto,
+                    idVivienda,
+                    nombre,
+                    fecha,
+                    clienteNombre,
+                    clienteDireccion,
+                    descuento: descuento || 0,
+                    iva: iva || 21,
+                    notas: notas || "",
+                    estado: estado || "BORRADOR"
+                };
 
                 // Clonar mecanismos de la vivienda al presupuesto
                 db.all("SELECT nombre, descripcion, precioUnitario, cantidad, idHabitacion FROM mecanismos WHERE idVivienda = ?", [idVivienda], (err, rowsMecanismos) => {
-                    if (err || rowsMecanismos.length === 0) {
+                    if (err) {
+                        console.error("Error al obtener mecanismos de la vivienda:", err);
                         return res.status(201).json({
-                            idPresupuesto,
-                            idVivienda,
-                            nombre,
-                            fecha,
-                            clienteNombre,
-                            clienteDireccion,
-                            descuento: descuento || 0,
-                            iva: iva || 21,
-                            notas: notas || "",
-                            estado: estado || "BORRADOR",
+                            ...presupuestoData,
+                            mecanismos: [],
+                            anadidos: []
+                        });
+                    }
+                    
+                    if (!rowsMecanismos || rowsMecanismos.length === 0) {
+                        return res.status(201).json({
+                            ...presupuestoData,
                             mecanismos: [],
                             anadidos: []
                         });
@@ -879,17 +906,8 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                                 console.error("Error al clonar los mecanismos:", err);
                             }
                             res.status(201).json({
-                                idPresupuesto,
-                                idVivienda,
-                                nombre,
-                                fecha,
-                                clienteNombre,
-                                clienteDireccion,
-                                descuento: descuento || 0,
-                                iva: iva || 21,
-                                notas: notas || "",
-                                estado: estado || "BORRADOR",
-                                mecanismos: rowsMecanismos,
+                                ...presupuestoData,
+                                mecanismos: rowsMecanismos || [],
                                 anadidos: []
                             });
                         }
@@ -942,82 +960,80 @@ app.patch("/presupuestos/:id", authenticateToken, (req, res) => {
             });
         };
 
-        db.serialize(() => {
-            updateCabecera((err) => {
-                if (err) {
-                    console.error("Error al actualizar cabecera del presupuesto:", err);
-                    return res.status(500).json({ error: "Error al actualizar cabecera del presupuesto: " + err.message });
-                }
+        updateCabecera((err) => {
+            if (err) {
+                console.error("Error al actualizar cabecera del presupuesto:", err);
+                return res.status(500).json({ error: "Error al actualizar cabecera del presupuesto: " + err.message });
+            }
 
-                // 2. Si vienen mecanismos, los reemplazamos de forma atómica
-                const updateMecanismos = (nextStep) => {
-                    if (!mecanismos) return nextStep();
-                    db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
-                        if (err) {
-                            console.error("Error al limpiar mecanismos previos del presupuesto:", err);
-                            return res.status(500).json({ error: "Error al limpiar mecanismos previos del presupuesto: " + err.message });
-                        }
-                        if (mecanismos.length === 0) return nextStep();
+            // 2. Si vienen mecanismos, los reemplazamos de forma atómica
+            const updateMecanismos = (nextStep) => {
+                if (!mecanismos) return nextStep();
+                db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
+                    if (err) {
+                        console.error("Error al limpiar mecanismos previos del presupuesto:", err);
+                        return res.status(500).json({ error: "Error al limpiar mecanismos previos del presupuesto: " + err.message });
+                    }
+                    if (mecanismos.length === 0) return nextStep();
 
-                        const placeholders = mecanismos.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
-                        const stmtValues = [];
-                        mecanismos.forEach(m => {
-                            stmtValues.push(id, m.nombre, m.descripcion || null, m.precioUnitario, m.cantidad, m.idHabitacion || null);
-                        });
-
-                        db.run(
-                            `INSERT INTO presupuesto_mecanismo (idPresupuesto, nombre, descripcion, precioUnitario, cantidad, idHabitacion)
-                             VALUES ${placeholders}`,
-                            stmtValues,
-                            function (err) {
-                                if (err) {
-                                    console.error("Error al insertar nuevos mecanismos en presupuesto:", err);
-                                    return res.status(500).json({ error: "Error al insertar nuevos mecanismos en presupuesto: " + err.message });
-                                }
-                                nextStep();
-                            }
-                        );
+                    const placeholders = mecanismos.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+                    const stmtValues = [];
+                    mecanismos.forEach(m => {
+                        stmtValues.push(id, m.nombre, m.descripcion || null, m.precioUnitario, m.cantidad, m.idHabitacion || null);
                     });
-                };
 
-                // 3. Si vienen añadidos, los reemplazamos de forma atómica
-                const updateAnadidos = () => {
-                    if (!anadidos) {
+                    db.run(
+                        `INSERT INTO presupuesto_mecanismo (idPresupuesto, nombre, descripcion, precioUnitario, cantidad, idHabitacion)
+                         VALUES ${placeholders}`,
+                        stmtValues,
+                        function (err) {
+                            if (err) {
+                                console.error("Error al insertar nuevos mecanismos en presupuesto:", err);
+                                return res.status(500).json({ error: "Error al insertar nuevos mecanismos en presupuesto: " + err.message });
+                            }
+                            nextStep();
+                        }
+                    );
+                });
+            };
+
+            // 3. Si vienen añadidos, los reemplazamos de forma atómica
+            const updateAnadidos = () => {
+                if (!anadidos) {
+                    return res.json({ message: "Presupuesto actualizado correctamente" });
+                }
+                db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
+                    if (err) {
+                        console.error("Error al limpiar añadidos previos:", err);
+                        return res.status(500).json({ error: "Error al limpiar añadidos previos: " + err.message });
+                    }
+                    if (anadidos.length === 0) {
                         return res.json({ message: "Presupuesto actualizado correctamente" });
                     }
-                    db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
-                        if (err) {
-                            console.error("Error al limpiar añadidos previos:", err);
-                            return res.status(500).json({ error: "Error al limpiar añadidos previos: " + err.message });
-                        }
-                        if (anadidos.length === 0) {
-                            return res.json({ message: "Presupuesto actualizado correctamente" });
-                        }
 
-                        const placeholders = anadidos.map(() => "(?, ?, ?, ?)").join(", ");
-                        const stmtValues = [];
-                        anadidos.forEach(a => {
-                            stmtValues.push(id, a.concepto, a.precioUnitario, a.cantidad);
-                        });
-
-                        db.run(
-                            `INSERT INTO presupuesto_anadido (idPresupuesto, concepto, precioUnitario, cantidad)
-                             VALUES ${placeholders}`,
-                            stmtValues,
-                            function (err) {
-                                if (err) {
-                                    console.error("Error al insertar nuevos añadidos:", err);
-                                    return res.status(500).json({ error: "Error al insertar nuevos añadidos: " + err.message });
-                                }
-                                res.json({ message: "Presupuesto actualizado correctamente" });
-                            }
-                        );
+                    const placeholders = anadidos.map(() => "(?, ?, ?, ?)").join(", ");
+                    const stmtValues = [];
+                    anadidos.forEach(a => {
+                        stmtValues.push(id, a.concepto, a.precioUnitario, a.cantidad);
                     });
-                };
 
-                updateMecanismos(() => {
-                    updateAnadidos();
+                    db.run(
+                        `INSERT INTO presupuesto_anadido (idPresupuesto, concepto, precioUnitario, cantidad)
+                         VALUES ${placeholders}`,
+                        stmtValues,
+                        function (err) {
+                            if (err) {
+                                console.error("Error al insertar nuevos añadidos:", err);
+                                return res.status(500).json({ error: "Error al insertar nuevos añadidos: " + err.message });
+                            }
+                            res.json({ message: "Presupuesto actualizado correctamente" });
+                        }
+                    );
                 });
+            };
+
+            updateMecanismos(() => {
+                updateAnadidos();
             });
         });
     });
@@ -1041,14 +1057,26 @@ app.delete("/presupuestos/:id", authenticateToken, (req, res) => {
             return res.status(403).json({ error: "No tienes permiso para eliminar este presupuesto." });
         }
 
-        db.serialize(() => {
-            db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id]);
-            db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id]);
-            db.run("DELETE FROM presupuesto WHERE idPresupuesto = ?", [id], function (err) {
+        // Eliminar primero mecanismos asociados
+        db.run("DELETE FROM presupuesto_mecanismo WHERE idPresupuesto = ?", [id], (err) => {
+            if (err) {
+                console.error("Error al eliminar mecanismos del presupuesto:", err);
+                return res.status(500).json({ error: "Error al eliminar mecanismos del presupuesto." });
+            }
+            // Luego eliminar añadidos
+            db.run("DELETE FROM presupuesto_anadido WHERE idPresupuesto = ?", [id], (err) => {
                 if (err) {
-                    return res.status(500).json({ error: "Error al eliminar el presupuesto." });
+                    console.error("Error al eliminar añadidos del presupuesto:", err);
+                    return res.status(500).json({ error: "Error al eliminar añadidos del presupuesto." });
                 }
-                res.json({ message: "Presupuesto eliminado correctamente." });
+                // Finalmente eliminar el presupuesto
+                db.run("DELETE FROM presupuesto WHERE idPresupuesto = ?", [id], function (err) {
+                    if (err) {
+                        console.error("Error al eliminar el presupuesto:", err);
+                        return res.status(500).json({ error: "Error al eliminar el presupuesto." });
+                    }
+                    res.json({ message: "Presupuesto eliminado correctamente." });
+                });
             });
         });
     });
