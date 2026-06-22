@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const { Pool } = require("pg");
 require("dotenv").config();
 const cors = require("cors");
@@ -571,7 +571,7 @@ app.get("/invitaciones/recibidas", authenticateToken, (req, res) => {
 
 // Responder a una invitación (aceptar/rechazar)
 app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
-    const idInvitacion = req.params.id;
+    const idInvitacion = parseInt(req.params.id, 10);
     const { accion } = req.body; // 'aceptar' o 'rechazar'
     if (!['aceptar', 'rechazar'].includes(accion)) {
         return res.status(400).json({ error: "Acción inválida. Debe ser 'aceptar' o 'rechazar'." });
