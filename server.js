@@ -443,7 +443,7 @@ app.post("/grupos", authenticateToken, (req, res) => {
             const idGrupo = this.lastID;
             // Unirse al grupo
             db.run(
-                "INSERT INTO usuario_grupo (idUsuario, idGrupo) VALUES (?, ?)",
+                "INSERT INTO usuario_grupo (idusuario, idgrupo) VALUES (?, ?)",
                 [req.user.idUsuario, idGrupo],
                 (err) => {
                     if (err) {
@@ -674,7 +674,7 @@ app.post("/mecanismos", authenticateToken, (req, res) => {
         }
 
         db.run(
-            "INSERT INTO mecanismos (nombre, descripcion, precioUnitario, cantidad, idVivienda, foto, idHabitacion) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO mecanismos (nombre, descripcion, preciounitario, cantidad, idvivienda, foto, idhabitacion) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [nombre, descripcion, precioUnitario, cantidad, idVivienda, foto, idHabitacion || null],
             function (err) {
                 if (err) {
@@ -881,7 +881,7 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
 
         // Insertar presupuesto
         db.run(
-            `INSERT INTO presupuesto (idVivienda, nombre, fecha, clienteNombre, clienteDireccion, descuento, iva, notas, estado)
+            `INSERT INTO presupuesto (idvivienda, nombre, fecha, clientenombre, clientedireccion, descuento, iva, notas, estado)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [idVivienda, nombre, fecha || null, clienteNombre || null, clienteDireccion || null, descuento || 0, iva || 21, notas || "", estado || "BORRADOR"],
             function (err) {
@@ -889,6 +889,8 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                     console.error("Error al registrar presupuesto:", err);
                     return res.status(500).json({ error: "Error al registrar el presupuesto." });
                 }
+                
+                console.error("DEBUG POST presupuestos - lastRow:", JSON.stringify(this.lastRow), "lastID:", this.lastID);
                 
                 // Obtener el ID del presupuesto insertado
                 let idPresupuesto = null;
@@ -1153,13 +1155,13 @@ app.get("/habitaciones", authenticateToken, (req, res) => {
 app.post("/habitaciones", authenticateToken, (req, res) => {
     const { nombre, idVivienda } = req.body;
     if (!nombre || !idVivienda) return res.status(400).json({ error: "nombre e idVivienda requeridos" });
-    db.run("INSERT INTO habitacion (nombre, idVivienda) VALUES (?, ?)", [nombre, idVivienda], function(err) {
+    db.run("INSERT INTO habitacion (nombre, idvivienda) VALUES (?, ?)", [nombre, idVivienda], function(err) {
         if (err) {
             console.error("Error al insertar habitación:", err);
             return res.status(500).json({ error: "Error al crear habitación" });
         }
         // Obtener la habitación recién creada para asegurar que tenemos el ID correcto
-        db.get("SELECT * FROM habitacion WHERE nombre = ? AND idVivienda = ? ORDER BY idHabitacion DESC LIMIT 1", [nombre, idVivienda], (getErr, row) => {
+        db.get("SELECT * FROM habitacion WHERE nombre = ? AND idvivienda = ? ORDER BY idhabitacion DESC LIMIT 1", [nombre, idVivienda], (getErr, row) => {
             if (getErr || !row) {
                 console.error("Error al obtener habitación recién creada:", getErr);
                 return res.status(500).json({ error: "Error al obtener la habitación creada" });
