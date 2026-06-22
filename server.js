@@ -413,17 +413,12 @@ app.get("/usuarios", authenticateToken, (req, res) => {
 // Obtener los grupos del usuario (creados por él o a los que se ha unido)
 app.get("/grupos/mis-grupos", authenticateToken, (req, res) => {
     db.all(`
-        SELECT g.*, u.fullname as ownername,
+        SELECT DISTINCT g.idgrupo, g.idowner, g.nombre, g.descripcion, g.fechacreacion, u.fullname as ownername,
                (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idgrupo = g.idgrupo) as membercount
         FROM grupo g
         JOIN usuario u ON g.idowner = u.idusuario
         WHERE g.idowner = ? 
-        UNION
-        SELECT g.*, u.fullname as ownername,
-               (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idgrupo = g.idgrupo) as membercount
-        FROM grupo g
-        JOIN usuario u ON g.idowner = u.idusuario
-        WHERE g.idgrupo IN (SELECT idgrupo FROM usuario_grupo WHERE idusuario = ?)
+           OR g.idgrupo IN (SELECT idgrupo FROM usuario_grupo WHERE idusuario = ?)
     `, [req.user.idUsuario, req.user.idUsuario], (err, rows) => {
         if (err) {
             console.error("Error en GET mis-grupos:", err);
@@ -624,7 +619,7 @@ app.get("/grupos/:id/miembros", authenticateToken, (req, res) => {
         if (!access) return res.status(403).json({ error: "No tienes permiso para ver los miembros." });
 
         db.all(`
-            SELECT u.idusuario, u.email, u.fullname, u.empresa,
+            SELECT DISTINCT u.idusuario, u.email, u.fullname, u.empresa,
                    COALESCE((SELECT 1 FROM grupo WHERE idgrupo = ? AND idowner = u.idusuario LIMIT 1), 0) as isowner
             FROM usuario_grupo ug
             JOIN usuario u ON ug.idusuario = u.idusuario
