@@ -799,6 +799,7 @@ app.get("/presupuestos/:id", authenticateToken, (req, res) => {
           AND (v.idDuenyo = ? OR v.idGrupo IN (SELECT idGrupo FROM usuario_grupo WHERE idUsuario = ?))
     `, [id, req.user.idUsuario, req.user.idUsuario], (err, rowPresupuesto) => {
         if (err) {
+            console.error("Error verificando presupuesto:", err);
             return res.status(500).json({ error: "Error al verificar permisos del presupuesto." });
         }
         if (!rowPresupuesto) {
@@ -819,11 +820,15 @@ app.get("/presupuestos/:id", authenticateToken, (req, res) => {
                     return res.status(500).json({ error: "Error al obtener añadidos del presupuesto." });
                 }
 
-                res.json({
+                const response = {
                     ...rowPresupuesto,
                     mecanismos: rowMecanismos || [],
                     anadidos: rowAnadidos || []
-                });
+                };
+                
+                console.log("GET presupuesto/:id - idPresupuesto:", id, "response keys:", Object.keys(response).slice(0, 10));
+                
+                res.json(response);
             });
         });
     });
@@ -859,7 +864,12 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                     return res.status(500).json({ error: "Error al registrar el presupuesto." });
                 }
                 const idPresupuesto = this.lastID;
-                const presupuestoData = this.lastRow || {
+                
+                // Asegurar que presupuestoData tenga idPresupuesto correcto
+                const presupuestoData = this.lastRow ? {
+                    ...this.lastRow,
+                    idPresupuesto: this.lastRow.idPresupuesto || idPresupuesto
+                } : {
                     idPresupuesto,
                     idVivienda,
                     nombre,
@@ -871,6 +881,8 @@ app.post("/presupuestos", authenticateToken, (req, res) => {
                     notas: notas || "",
                     estado: estado || "BORRADOR"
                 };
+                
+                console.log("POST presupuesto - idPresupuesto:", idPresupuesto, "lastRow:", this.lastRow ? "present" : "null");
 
                 // Clonar mecanismos de la vivienda al presupuesto
                 db.all("SELECT nombre, descripcion, precioUnitario, cantidad, idHabitacion FROM mecanismos WHERE idVivienda = ?", [idVivienda], (err, rowsMecanismos) => {
