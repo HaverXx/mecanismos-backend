@@ -37,6 +37,9 @@ const keyMap = {
     gruponombre: "grupoNombre",
     membercount: "memberCount",
     nombreremitente: "nombreRemitente",
+    nombregrupo: "nombreGrupo",
+    idinvitacion: "idInvitacion",
+    estado: "estado",
     isowner: "isOwner"
 };
 
@@ -564,7 +567,7 @@ app.get("/invitaciones/recibidas", authenticateToken, (req, res) => {
             WHERE i.emaildestinatario = ? AND i.estado = 'PENDIENTE'
         `, [user.email], (err, rows) => {
             if (err) return res.status(500).json({ error: "Error al obtener las invitaciones." });
-            res.json(rows);
+            res.json(rows.map(mapKeys));
         });
     });
 });
