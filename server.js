@@ -581,11 +581,26 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
     }
 
     db.get("SELECT email FROM usuario WHERE idusuario = ?", [req.user.idUsuario], (err, user) => {
-        if (err || !user) return res.status(500).json({ error: "Error de usuario." });
+        if (err || !user) {
+            return res.status(500).json({ 
+                error: "Error de usuario.",
+                debug: { idUsuario: req.user.idUsuario, err }
+            });
+        }
 
         db.get("SELECT * FROM invitacion WHERE idinvitacion = ?", [idInvitacion], (err, inv) => {
-            if (err) return res.status(500).json({ error: "Error al buscar la invitación." });
-            if (!inv) return res.status(404).json({ error: "Invitación no encontrada." });
+            if (err) {
+                return res.status(500).json({ 
+                    error: "Error al buscar la invitación.",
+                    debug: { idInvitacion, err }
+                });
+            }
+            if (!inv) {
+                return res.status(404).json({ 
+                    error: "Invitación no encontrada.",
+                    debug: { idInvitacion }
+                });
+            }
             
             // Normalizar emails para comparación (trim + lowercase)
             const emailDestinatario = inv.emaildestinatario ? inv.emaildestinatario.trim().toLowerCase() : '';
@@ -594,7 +609,12 @@ app.post("/invitaciones/:id/responder", authenticateToken, (req, res) => {
             if (emailDestinatario !== emailUsuario) {
                 return res.status(403).json({ 
                     error: "No tienes permiso para responder a esta invitación.",
-                    debug: { emailDestinatario, emailUsuario }
+                    debug: { 
+                        emailDestinatario, 
+                        emailUsuario,
+                        idUsuarioLogueado: req.user.idUsuario,
+                        idInvitacion
+                    }
                 });
             }
 
