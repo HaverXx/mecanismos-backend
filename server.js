@@ -1081,11 +1081,10 @@ app.delete("/habitaciones/:id", authenticateToken, (req, res) => {
         if (err) return res.status(500).json({ error: "Error al buscar la habitación" });
         if (!row) return res.status(404).json({ error: "Habitación no encontrada" });
 
-        const nombreHabitacion = row.nombre;
-        db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = ?", [nombreHabitacion], (updateErr) => {
+        db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = ?", [id], (updateErr) => {
             if (updateErr) return res.status(500).json({ error: "Error al desvincular mecanismos" });
 
-            db.run("UPDATE presupuesto_mecanismo SET idHabitacion = NULL WHERE idHabitacion = ?", [nombreHabitacion], (updatePresErr) => {
+            db.run("UPDATE presupuesto_mecanismo SET idHabitacion = NULL WHERE idHabitacion = ?", [id], (updatePresErr) => {
                 if (updatePresErr) return res.status(500).json({ error: "Error al desvincular mecanismos del presupuesto" });
 
                 db.run("DELETE FROM habitacion WHERE idHabitacion = ?", [id], function(err) {
