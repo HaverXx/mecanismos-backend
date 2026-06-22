@@ -413,12 +413,12 @@ app.get("/usuarios", authenticateToken, (req, res) => {
 // Obtener los grupos del usuario (creados por él o a los que se ha unido)
 app.get("/grupos/mis-grupos", authenticateToken, (req, res) => {
     db.all(`
-        SELECT DISTINCT g.*, u.fullName as ownerName,
-               (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idGrupo = g.idGrupo) as memberCount
+        SELECT g.*, u.fullname as ownername,
+               (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idgrupo = g.idgrupo) as membercount
         FROM grupo g
-        JOIN usuario u ON g.idOwner = u.idUsuario
-        LEFT JOIN usuario_grupo ug ON g.idGrupo = ug.idGrupo
-        WHERE g.idOwner = ? OR ug.idUsuario = ?
+        JOIN usuario u ON g.idowner = u.idusuario
+        WHERE g.idowner = ? 
+           OR g.idgrupo IN (SELECT idgrupo FROM usuario_grupo WHERE idusuario = ?)
     `, [req.user.idUsuario, req.user.idUsuario], (err, rows) => {
         if (err) {
             return res.status(500).json({ error: "Error al obtener los grupos." });
@@ -469,7 +469,7 @@ app.delete("/grupos/:id", authenticateToken, (req, res) => {
     db.get("SELECT idowner FROM grupo WHERE idgrupo = ?", [idGrupo], (err, group) => {
         if (err) return res.status(500).json({ error: "Error al buscar el grupo." });
         if (!group) return res.status(404).json({ error: "Grupo no encontrado." });
-        if (group.idowner !== req.user.idUsuario) {
+        if (group.idOwner !== req.user.idUsuario) {
             return res.status(403).json({ error: "No tienes permiso para eliminar este grupo." });
         }
         db.serialize(() => {
