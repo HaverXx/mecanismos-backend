@@ -1074,11 +1074,26 @@ app.post("/habitaciones", authenticateToken, (req, res) => {
 });
 
 app.delete("/habitaciones/:id", authenticateToken, (req, res) => {
-    const id = req.params.id;
-    db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = (SELECT nombre FROM habitacion WHERE idHabitacion = ?)", [id], () => {
-        db.run("DELETE FROM habitacion WHERE idHabitacion = ?", [id], function(err) {
-            if (err) return res.status(500).json({ error: "Error al eliminar habitación" });
-            res.json({ message: "Habitación eliminada" });
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID de habitación inválido" });
+
+    db.get("SELECT nombre FROM habitacion WHERE idHabitacion = ?", [id], (err, row) => {
+        if (err) return res.status(500).json({ error: "Error al buscar la habitación" });
+        if (!row) return res.status(404).json({ error: "Habitación no encontrada" });
+
+        const nombreHabitacion = row.nombre;
+        db.run("UPDATE mecanismos SET idHabitacion = NULL WHERE idHabitacion = ?", [nombreHabitacion], (updateErr) => {
+            if (updateErr) return res.status(500).json({ error: "Error al desvincular mecanismos" });
+
+            db.run("UPDATE presupuesto_mecanismo SET idHabitacion = NULL WHERE idHabitacion = ?", [nombreHabitacion], (updatePresErr) => {
+                if (updatePresErr) return res.status(500).json({ error: "Error al desvincular mecanismos del presupuesto" });
+
+                db.run("DELETE FROM habitacion WHERE idHabitacion = ?", [id], function(err) {
+                    if (err) return res.status(500).json({ error: "Error al eliminar habitación" });
+                    if (this.changes === 0) return res.status(404).json({ error: "Habitación no encontrada" });
+                    res.json({ message: "Habitación eliminada" });
+                });
+            });
         });
     });
 });
