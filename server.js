@@ -413,7 +413,7 @@ app.get("/usuarios", authenticateToken, (req, res) => {
 // Obtener los grupos del usuario (creados por él o a los que se ha unido)
 app.get("/grupos/mis-grupos", authenticateToken, (req, res) => {
     db.all(`
-        SELECT DISTINCT g.idgrupo, g.idowner, g.nombre, g.descripcion, g.fechacreacion, u.fullname as ownername,
+        SELECT DISTINCT g.idgrupo, g.idowner, g.nombre, g.descripcion, u.fullname as ownername,
                (SELECT COUNT(*) FROM usuario_grupo ug WHERE ug.idgrupo = g.idgrupo) as membercount
         FROM grupo g
         JOIN usuario u ON g.idowner = u.idusuario
