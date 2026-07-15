@@ -48,7 +48,10 @@ const keyMap = {
     nombregrupo: "nombreGrupo",
     idinvitacion: "idInvitacion",
     estado: "estado",
-    isowner: "isOwner"
+    isowner: "isOwner",
+    idtablero: "idTablero",
+    idlista: "idLista",
+    idtarea: "idTarea"
 };
 
 function mapKeys(row) {
@@ -1245,6 +1248,109 @@ app.delete("/habitaciones/:id", authenticateToken, (req, res) => {
                 });
             });
         });
+    });
+});
+
+// --- RUTAS PLANIFICADOR ---
+
+// GET /tableros (del usuario)
+app.get("/tableros", authenticateToken, (req, res) => {
+    db.all("SELECT * FROM tablero WHERE idUsuario = ?", [req.user.idUsuario], (err, rows) => {
+        if (err) return res.status(500).json({ error: "Error obteniendo tableros" });
+        res.json(rows);
+    });
+});
+
+// POST /tableros
+app.post("/tableros", authenticateToken, (req, res) => {
+    const { nombre } = req.body;
+    db.run("INSERT INTO tablero (nombre, idUsuario) VALUES (?, ?) RETURNING idTablero", [nombre, req.user.idUsuario], function(err) {
+        if (err) return res.status(500).json({ error: "Error creando tablero" });
+        res.json({ idTablero: this.lastID || (this.lastRow && this.lastRow.idTablero), nombre, idUsuario: req.user.idUsuario });
+    });
+});
+
+// GET /listas/:idTablero
+app.get("/listas/:idTablero", authenticateToken, (req, res) => {
+    db.all("SELECT * FROM lista WHERE idTablero = ? ORDER BY orden ASC", [req.params.idTablero], (err, rows) => {
+        if (err) return res.status(500).json({ error: "Error obteniendo listas" });
+        res.json(rows);
+    });
+});
+
+// POST /listas
+app.post("/listas", authenticateToken, (req, res) => {
+    const { nombre, idTablero, orden, color } = req.body;
+    db.run("INSERT INTO lista (nombre, idTablero, orden, color) VALUES (?, ?, ?, ?) RETURNING idLista", [nombre, idTablero, orden || 0, color || null], function(err) {
+        if (err) return res.status(500).json({ error: "Error creando lista" });
+        res.json({ idLista: this.lastID || (this.lastRow && this.lastRow.idLista), nombre, idTablero, orden, color });
+    });
+});
+
+// PATCH /listas/:id
+app.patch("/listas/:id", authenticateToken, (req, res) => {
+    const { nombre, color } = req.body;
+    let updates = [];
+    let params = [];
+    if (nombre !== undefined) { updates.push("nombre = ?"); params.push(nombre); }
+    if (color !== undefined) { updates.push("color = ?"); params.push(color); }
+    
+    if (updates.length === 0) return res.json({ message: "Nada que actualizar" });
+    
+    params.push(req.params.id);
+    db.run(`UPDATE lista SET ${updates.join(', ')} WHERE idLista = ?`, params, (err) => {
+        if (err) return res.status(500).json({ error: "Error actualizando lista" });
+        res.json({ message: "Lista actualizada" });
+    });
+});
+
+// GET /tareas/:idTablero
+app.get("/tareas/:idTablero", authenticateToken, (req, res) => {
+    db.all(`
+        SELECT t.* FROM tarea t
+        JOIN lista l ON t.idLista = l.idLista
+        WHERE l.idTablero = ?
+        ORDER BY t.orden ASC
+    `, [req.params.idTablero], (err, rows) => {
+        if (err) return res.status(500).json({ error: "Error obteniendo tareas" });
+        res.json(rows);
+    });
+});
+
+// POST /tareas
+app.post("/tareas", authenticateToken, (req, res) => {
+    const { titulo, descripcion, idLista, orden, color } = req.body;
+    db.run("INSERT INTO tarea (titulo, descripcion, idLista, orden, color) VALUES (?, ?, ?, ?, ?) RETURNING idTarea", [titulo, descripcion || '', idLista, orden || 0, color || null], function(err) {
+        if (err) return res.status(500).json({ error: "Error creando tarea" });
+        res.json({ idTarea: this.lastID || (this.lastRow && this.lastRow.idTarea), titulo, descripcion, idLista, orden, color });
+    });
+});
+
+// PATCH /tareas/:id
+app.patch("/tareas/:id", authenticateToken, (req, res) => {
+    const { titulo, descripcion, idLista, orden, color } = req.body;
+    let updates = [];
+    let params = [];
+    if (titulo !== undefined) { updates.push("titulo = ?"); params.push(titulo); }
+    if (descripcion !== undefined) { updates.push("descripcion = ?"); params.push(descripcion); }
+    if (idLista !== undefined) { updates.push("idLista = ?"); params.push(idLista); }
+    if (orden !== undefined) { updates.push("orden = ?"); params.push(orden); }
+    if (color !== undefined) { updates.push("color = ?"); params.push(color); }
+    
+    if (updates.length === 0) return res.json({ message: "Nada que actualizar" });
+    
+    params.push(req.params.id);
+    db.run(`UPDATE tarea SET ${updates.join(', ')} WHERE idTarea = ?`, params, (err) => {
+        if (err) return res.status(500).json({ error: "Error actualizando tarea" });
+        res.json({ message: "Tarea actualizada" });
+    });
+});
+
+// DELETE /tareas/:id
+app.delete("/tareas/:id", authenticateToken, (req, res) => {
+    db.run("DELETE FROM tarea WHERE idTarea = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: "Error eliminando tarea" });
+        res.json({ message: "Tarea eliminada" });
     });
 });
 
